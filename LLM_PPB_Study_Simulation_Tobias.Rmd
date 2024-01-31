@@ -1,0 +1,98 @@
+---
+title: "LLM_PPB_Study_Simulation"
+output: html_notebook
+---
+
+```{r SETUP-Packages, eval=T, message=F}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(emmeans)
+library(equivUMP)
+library(lme4)
+```
+
+```{r FUNCTIONS Tobias}
+changeFraction = function(vecX, cf){
+  samplepos =  sample(seq(1,length(vecX)))[1:(length(vecX)*cf)]
+  vecRepl = sample(rep(c(0,1,2,3), each=500))[1:100]
+  vecX[samplepos] = vecRepl[samplepos]
+  vecX
+}
+
+compare_vec <- function(v_1, v_2){
+  sum(v_1 == v_2)
+}
+```
+
+Insgesamt eine stark vereinfachte Simulation, um darzustellen, wie ich mir gedacht hatte, dass die Daten aussehen werden und wie wir sie ungefähr analysieren. ChangeFrac und samplesiz habe ich konstant gehalten umd einfach mal einen möglichen Workflow an einem Datensatz zu zeigen. Der Unterschied zu Emanuel ist, dass eine Anzahl n (hier 5) von Assistenzärzten gegen eine Anzahl LLM runs erzeugt werden. Die Idee ist als nicht gegen den Goldstandard zu testen, sodern gegen das Abschneiden der Assistenzärzte.
+
+```{r DATA SIMULATION Tobias}
+changefrac_delta = 0.01
+samplesize = 10
+
+vec1_sample = numeric()
+corres = numeric()
+emtestRES = numeric()
+emtestPVAL = numeric()
+data = numeric()
+corresINT = numeric()
+results = list()
+
+for(i in 1:samplesize){
+  vec1 = numeric()
+  vec2 = numeric()
+  vec3 = numeric()
+  vec1_sample = sample(rep(c(0,1,2,3), each=500))[1:100]
+  vec1 = c(vec1, vec1_sample)
+  for(j in 1:5){
+    vec2 = c(vec2, changeFraction(vec1_sample, 0.1))
+    vec3 = c(vec3, changeFraction(vec1_sample, 0.1+changefrac_delta))
+  }
+  idvec  = rep(i, 1100)
+  item = rep(c(1:100), times=11)
+  ratingType = rep(c("goldSTD","LLM_run1", "LLM_run2", "LLM_run3", "LLM_run4", "LLM_run5", "doc1","doc2","doc3", "doc4", "doc5"), each=100)
+  value = c(vec1, vec2, vec3)
+  data = rbind(data, cbind(idvec, item , ratingType, value))
+}
+
+colnames(data)[4] = "value"
+data=data.frame(data)
+data$value = as.numeric(data$value)
+data$ratingType = as.factor(data$ratingType)
+data$idvec = as.factor(data$idvec)
+data$item = as.factor(data$item)
+```
+
+Als nächstes werdend dann die jeweiligen Vektoren zunächst dichotomisiert (hätte man gleich machen können, klar, aber es geht ja darum alles so realistisch wie möglich darzustellen), da wir uns zunächst auf erkannt oder nicht erkannt, bzw falsch erkannt der PPB Items konzentrieren wollen. Dann wird jeder Vekor mit dem goldStd Vektor verglichen und eine Art Accuracy berechnet.
+
+```{r DATA WRANGLING Tobias}
+data.ana <-
+data %>% 
+  mutate(value = ifelse(value==0,0,1)) %>%
+  pivot_wider(names_from = ratingType, values_from = value) %>% 
+  select(!item) %>% 
+  group_by(idvec) %>%
+  summarise(
+    across(
+      .cols = starts_with("doc") | starts_with("LLM"),
+      .fns = ~ compare_vec(goldSTD, .)
+    )
+  ) %>% 
+    pivot_longer(
+    cols = starts_with("doc") | starts_with("LLM"),  
+    names_to = "ratingType",  
+    values_to = "accuracy"  
+  ) %>% 
+  mutate(group = factor(ifelse(str_detect(ratingType, "^doc"), "doc", "LLM")))
+```
+
+Und hier dann grob skizziert eine mögliche Analyse. Habe früher an dieser Stelle immer gerne alles mit meinem Kollegen, der mathematischer Statistiker ist, durchgesprochen und das Modell entsprechend angepasst. Bin da zugegeben etwas eingerostet. Daher hier jetzt nur ein sehr grober Aufschlag.
+
+```{r DATA ANALYSIS Tobias}
+lmm <- lmer(accuracy ~ group + (1 | idvec), data = data.ana)
+summary(lmm)
+```
+
+Das Ganze müsste man dann noch in das noninferiority setting einbetten. Wollte aber erst mal hören, was ihr dazu sagt.
